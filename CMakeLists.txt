@@ -17,6 +17,7 @@ find_package(catkin REQUIRED COMPONENTS
   nav_core
   angles
   base_local_planner
+  tf
   #ros_core
   message_generation
 )

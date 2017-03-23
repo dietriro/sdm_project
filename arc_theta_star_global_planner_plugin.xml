@@ -1,0 +1,5 @@
+<library path="lib/libarc_theta_star_global_planner_lib">
+  <class name="global_planner/ARCThetaGlobalPlanner" type="global_planner::ARCThetaGlobalPlanner" base_class_type="nav_core::BaseGlobalPlanner">
+    <description>This is a global planner using Angular Rate Constrained Theta* path planning.</description>
+  </class>
+</library>

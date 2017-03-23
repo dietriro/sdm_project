@@ -1,7 +1,11 @@
+#!/usr/bin/env python
+
 import numpy as np
 from Queue import PriorityQueue
 from Node import Node
 from math import floor, atan2
+from geometry_msgs.msg import Pose2D, Pose, PoseArray
+
 
 class ARCThetaStar:
     '''
@@ -19,20 +23,34 @@ class ARCThetaStar:
     r_max = None
     # The velocity of the robot
     v = None
+    # The factor with which the angular sum for a path is multiplied.
+    t_factor = None
     # The possible actions within the map
-    actions = np.array([[ 0,  1],   # North
-                        [ 1,  0],   # East
-                        [ 0, -1],   # South
-                        [-1,  0]])  # West
-
+    actions = np.array([[0, 1],  # North
+                        [1, 0],  # East
+                        [0, -1],  # South
+                        [-1, 0]])  # West
+    
+    # actions = np.array([[ 0,  1],   # North
+    #                     [ 1,  0],   # East
+    #                     [ 0, -1],   # South
+    #                     [-1,  0],   # West
+    #                     [ 1,  1],   # North-East
+    #                     [ 1, -1],   # South-East
+    #                     [-1, -1],   # South-West
+    #                     [-1,  1]])  # North-East
+    
     def __init__(self, map, open_size=50000, closed_size=50000, epsilon=1.0,
-                 r_max=1.0, v=2.0):
+                 r_max=1.0, v=2.0, t_factor=0.0):
         '''
         Constructor of ARCThetaStar class.
         :param map: The map that the planner is going to use as a numpy array with values between 0 and 1, where 0 means the tile is free and 1 the tile is occupied.
         :param open_size: The maximum size of the open queue.
         :param closed_size: The maximum size of the closed queue.
         :param epsilon: The epsilon value used for calculating the heuristic value.
+        :param r_max: The maximum angular change rate allowed.
+        :param v: The desired velocity of the robot.
+        :param t_factor: The factor with which the angular sum for a path is multiplied.
         '''
         self.map = map
         self.open = PriorityQueue(open_size)
@@ -40,6 +58,13 @@ class ARCThetaStar:
         self.epsilon = epsilon
         self.r_max = r_max
         self.v = v
+        self.t_factor = t_factor
+    
+    def check_map(self, x, y):
+        if x < 0 or x >= self.map.shape[0] or y < 0 or y >= self.map.shape[1]:
+            return True
+        else:
+            return self.map[x, y]
 
     def line_of_sight(self, id_start, id_goal):
         '''
@@ -50,81 +75,80 @@ class ARCThetaStar:
         '''
         pos_s = self.pos_from_id(id_start)
         pos_g = self.pos_from_id(id_goal)
-        
-        xs = pos_s[0]
-        ys = pos_s[1]
-        xe = pos_g[0]
-        ye = pos_g[1]
-        
+    
+        xs = int(pos_s[0])
+        ys = int(pos_s[1])
+        xe = int(pos_g[0])
+        ye = int(pos_g[1])
+    
         dx = xe - xs
         dy = ye - ys
-        
-        f = 0
-        
+    
+        f = int(0)
+    
         if dy < 0:
             dy = -dy
             sy = -1
         else:
             sy = 1
-            
+    
         if dx < 0:
             dx = -dx
             sx = -1
         else:
             sx = 1
-            
+    
         if dx >= dy:
-            while not xs == xe:
+            while xs != xe:
                 f += dy
                 if f >= dx:
-                    if self.map[int(xs+((sx-1)/2)), int(ys+((sy-1)/2))]:
+                    if self.map[int(xs + ((sx - 1) / 2)), int(ys + ((sy - 1) / 2))]:
                         return False
                     ys += sy
                     f -= dx
-                if not f == 0 and self.map[int(xs+((sx-1)/2)), int(ys+((sy-1)/2))]:
+                if f != 0 and self.map[int(xs + ((sx - 1) / 2)), int(ys + ((sy - 1) / 2))]:
                     return False
-                if dy == 0 and self.map[int(xs+((sx-1)/2)), int(ys)] and \
-                        self.map[int(xs+((sx-1)/2)), int(ys-1)]:
+                if dy == 0 and self.map[int(xs + ((sx - 1) / 2)), int(ys)] and \
+                        self.map[int(xs + ((sx - 1) / 2)), int(ys - 1)]:
                     return False
                 xs += sx
         else:
-            while not ys == ye:
+            while ys != ye:
                 f += dx
                 if f >= dy:
-                    if self.map[int(xs+((sx-1)/2)), int(ys+((sy-1)/2))]:
+                    if self.map[int(xs + ((sx - 1) / 2)), int(ys + ((sy - 1) / 2))]:
                         return False
                     xs += sx
                     f -= dy
-                if not f == 0 and self.map[int(xs+((sx-1)/2)), int(ys+((sy-1)/2))]:
+                if f != 0 and self.map[int(xs + ((sx - 1) / 2)), int(ys + ((sy - 1) / 2))]:
                     return False
-                if dy == 0 and self.map[int(xs), int(int(ys+((sy-1)/2)))] and \
-                        self.map[int(xs-1), int(ys+((sy-1)/2))]:
+                if dx == 0 and self.map[int(xs), int(ys + ((sy - 1) / 2))] and \
+                        self.map[int(xs - 1), int(ys + ((sy - 1) / 2))]:
                     return False
                 ys += sy
         return True
-        
+    
     def arc_check_angle(self, n_cur, n_next):
-        # o_cur = atan((n_next.pos[1]-n_cur.pos[1]) / (n_next.pos[0]-n_cur.pos[0]))
-        o_cur = atan2((n_next.pos[1]-n_cur.pos[1]), (n_next.pos[0]-n_cur.pos[0]))
+        o_cur = atan2((n_next.pos[1] - n_cur.pos[1]), (n_next.pos[0] - n_cur.pos[0]))
         
         d = self.h_euc(n_next.pos, n_cur.pos)
         
-        alpha = o_cur-n_cur.o
+        alpha = o_cur - n_cur.o
         
         # print(alpha)
         
         # Check if angular rate change is within the max value
-        if alpha*self.v/d > self.r_max:
+        if alpha * self.v / d > self.r_max:
             # print('FALSE')
             return False
         
         # Update new angular change
         n_next.o = alpha
+        n_next.t += self.t_factor * abs(alpha)
         
         # print('TRUE')
         return True
-        
-        
+    
     def get_node(self, index):
         '''
         Checks whether a Node with the given id is listed in the queue.
@@ -140,23 +164,34 @@ class ARCThetaStar:
                 return n
         return None
     
-    def update_node(self, n_new):
+    def update_node(self, n_cur, n_nbr):
         '''
         Updates the g and parent value of a node within the open queue, in case the g value is smaller than the old one.
         :param n_new: The node with the new values.
         :return: True, if the node was found, false if not.
         '''
-        if not self.arc_check_angle(self.get_node(n_new.parent), n_new):
-            return
-        for n in self.open.queue:
-            if n.id == n_new.id:
-                if n_new.g <= n.g:
-                    n.g = n_new.g
-                    n.parent = n_new.parent
-                    n.o = n_new.o
-                    return True
-        return False
-            
+        g_old = n_nbr.g
+        parent = self.get_node(n_cur.parent)
+        
+        # Check for line of sight to parent
+        if self.line_of_sight(parent.id, n_nbr.id):
+            self.compute_cost(parent, n_nbr)
+        else:
+            self.compute_cost(n_cur, n_nbr)
+        
+        if n_nbr.g < g_old:
+            if n_nbr in self.open.queue:
+                self.open.queue.remove(n_nbr)
+            self.open.put(Node(n_nbr.id, pos=n_nbr.pos, g=n_nbr.g, h=n_nbr.h,
+                               o=n_nbr.o, parent=n_nbr.parent, t=n_nbr.t))
+    
+    def compute_cost(self, n_cur, n_nbr):
+        g_new = n_cur.g + self.cost(n_cur.id, n_nbr.id)
+        if g_new < n_nbr.g and self.arc_check_angle(n_cur, n_nbr):
+            n_nbr.parent = n_cur.id
+            n_nbr.g = g_new
+            # print(n_nbr.t)
+    
     def cost(self, id_start, id_goal):
         '''
         Calculates the cost between two nodes based on the euclidean distance between them.
@@ -172,19 +207,18 @@ class ARCThetaStar:
         :param pos: The position used to generate the unique id.
         :return: The unique id generated.
         '''
-        return (pos[0] - 1) * self.map.shape[0] + pos[1]
-        
+        return self.map.shape[1] * pos[0] + pos[1]
+    
     def pos_from_id(self, index):
         '''
         Calculates the position of a node within the map using the given index.
         :param index: The index of the node within the map.
         :return: The position (x,y) of the node within the map.
         '''
-        index -= 1
-        x = floor(index / self.map.shape[0])
+        x = floor(index / self.map.shape[1])
         y = index % self.map.shape[1]
-        return np.array([x-1, y-1])
-        
+        return np.array([x, y])
+    
     def h_euc(self, start, goal):
         '''
         Returns the heuristic value for the given start point to the goal.
@@ -192,7 +226,7 @@ class ARCThetaStar:
         :param goal: The goal position in the map
         :return: The euclidean distance to the goal.
         '''
-        return np.linalg.norm(start-goal)*self.epsilon
+        return np.linalg.norm(start - goal) * self.epsilon
     
     def is_valid(self, position):
         '''
@@ -202,13 +236,13 @@ class ARCThetaStar:
         '''
         # Check for map bounds
         if position[0] < 0 or position[0] >= self.map.shape[0] or \
-                position[1] < 0 or position[1] >= self.map.shape[1]:
+                        position[1] < 0 or position[1] >= self.map.shape[1]:
             return False
         # Check for occupancy of position
         if self.map[position[0], position[1]]:
             return False
         return True
-             
+    
     def get_neighbors(self, node):
         '''
         Finds all valid neighbors for a given node.
@@ -217,14 +251,13 @@ class ARCThetaStar:
         '''
         nbrs = list()
         for i in range(len(self.actions)):
-            new_pos = self.actions[i,:]+node.pos
+            new_pos = self.actions[i, :] + node.pos
             # Check if new node's position is within the map
             if not self.is_valid(new_pos):
                 continue
             # If new position is valid, create a new node using the parent nodes values
             new_id = self.id_from_pos(new_pos)
-            nbrs.append(Node(new_id, parent=node.id,
-                             g=node.g+self.cost(node.id, new_id), pos=new_pos))
+            nbrs.append(Node(new_id, parent=node.id, pos=new_pos))
         return nbrs
     
     def get_g(self, index):
@@ -240,23 +273,48 @@ class ARCThetaStar:
             if n.id == index:
                 return n.g
         return None
-   
-    def print_path(self, path):
+    
+    def pose2d(self, node):
+        '''
+        Returns a geometry_msgs::Pose2D for given x,y and theta values.
+        :param x: The x value of the Pose2D.
+        :param y: The y value of the Pose2D.
+        :param theta: The theta value of the Pose2D.
+        :return: The Pose2D created from the given arguments.
+        '''
+        pose2d = Pose2D()
+        pose2d.x = node.pos[0]
+        pose2d.y = node.pos[1]
+        pose2d.theta = node.o
+        
+        return pose2d
+    
+    def print_path(self, path, angular_cost, cost):
         '''
         Inserts the path into the map and prints it.
         :param path: The path to be visualized.
         :return: Nothing.
         '''
-        map_tmp = self.map
+        map_tmp = np.copy(self.map)
+        last_pos = None
+        length = 0.0
+        
         for pos in path:
+            # Visualize path on map
             map_tmp[pos[0], pos[1]] = 2
-        print('\nFinal Path:')
+            # # Calculate path length
+            # if last_pos is not None:
+            #     length += self.h_euc(last_pos, pos)
+            # last_pos = pos
+        
+        print('\nPath length:        {0:.2f}'.format(cost))
+        print('Angular path cost:  {0:.2f}\n'.format(angular_cost))
         print(map_tmp)
         print('\n(0) identifies a free cell')
         print('(1) identifies an occupied cell')
         print('(2) identifies a cell belonging to the path')
-
-    def calculate_path(self, start, goal, start_orientation=0.0):
+    
+    def calculate_path(self, start, goal, start_orientation=10):
         '''
         Calculates the shortest path from start to goal according to ARCThetaA-Star
         :param start_orientation: The initial orientation of the robot.
@@ -272,111 +330,90 @@ class ARCThetaStar:
         if not self.is_valid(goal):
             print('Goal position out of map bounds.')
             return
-            
+        
         # Save start/goal pos as node
         n_s = Node(self.id_from_pos(start), pos=start, h=self.h_euc(start, goal),
                    o=start_orientation)
         n_g = Node(self.id_from_pos(goal), pos=goal)
         
         # Set current node equal to start node
-        n_cur = n_s
+        self.open.put(n_s)
         
         print('Start finding path...')
         
         # Loop until goal reached
-        while n_cur.id != n_g.id:
-            print(n_cur.pos)
+        while not self.open.empty():
+            # Get best node
+            n_cur = self.open.get()
+            
+            if n_cur.id == n_g.id:
+                break
+            
             # Add current node to closed list
             self.closed.put(n_cur)
             # Get a list of all neighboring nodes
             nbrs = self.get_neighbors(n_cur)
             # Loop through neighboring nodes
             for n_nbr in nbrs:
-                # Check if open contains neighbor
-                if n_nbr in self.open.queue:
-                    # Check for line of sight
-                    if self.line_of_sight(n_cur.parent, n_nbr.id):
-                        # Update parameters to cur parents parameters if line_of_sight
-                        n_nbr.parent = n_cur.parent
-                        n_nbr.g = self.get_g(n_cur.parent) + \
-                                  self.cost(n_cur.parent, n_nbr.id)
-                        # Do a normal update with cur values otherwise
-                        self.update_node(n_nbr)
-                    elif self.line_of_sight(n_cur.id, n_nbr.id):
-                        # Do a normal update with cur values otherwise
-                        self.update_node(n_nbr)
-                # Check if closed does not contain neighbor
-                elif n_nbr not in self.closed.queue:
-                    if self.line_of_sight(n_cur.parent, n_nbr.id):
-                        # Update parameters to cur parents parameters if line_of_sight
-                        n_nbr.parent = n_cur.parent
-                        n_nbr.g = self.get_g(n_cur.parent) + \
-                                  self.cost(n_cur.parent, n_nbr.id)
-                    elif not self.line_of_sight(n_cur.id, n_nbr.id):
-                        continue
-                    # Check angle
-                    if not self.arc_check_angle(n_cur, n_nbr):
-                        continue
-                    # Calculate heuristic value for new node
-                    n_nbr.h = self.h_euc(n_nbr.pos, goal)
-                    # Add new node to open queue
-                    self.open.put(n_nbr)
-            
-            # Get next
-            if self.open.empty():
-                print('Error! No Nodes left and goal not reached!')
-                return []
-            
-            n_cur = self.open.get()
+                if not n_nbr in self.closed.queue:
+                    if not n_nbr in self.open.queue:
+                        n_nbr.g = np.inf
+                        n_nbr.parent = None
+                        n_nbr.h = self.h_euc(n_nbr.pos, goal)
+                    self.update_node(n_cur, n_nbr)
         
         print('Finished path search.')
         
         # Follow path back
         path = [n_cur.pos]
+        angular_cost = n_cur.t
+        cost = n_cur.g
         while n_cur.id != n_s.id:
             # Change current node to parent node
             n_cur = self.get_node(n_cur.parent)
             # Append current position to path
             path.append(n_cur.pos)
+            # Update cost
+            angular_cost += n_cur.t
         
-        self.print_path(path)
+        self.print_path(path, angular_cost, cost)
         
         return path
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-            
-            
-            
-    
-        
-        
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

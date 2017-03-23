@@ -1,8 +1,11 @@
+#!/usr/bin/env python
+
 import numpy as np
 from Queue import PriorityQueue
 from Node import Node
 from math import floor, atan2
 from geometry_msgs.msg import Pose2D, Pose, PoseArray
+import scipy.io as sio
 
 class ARCThetaStar:
     '''
@@ -20,14 +23,16 @@ class ARCThetaStar:
     r_max = None
     # The velocity of the robot
     v = None
+    # The factor with which the angular sum for a path is multiplied.
+    t_factor = None
     # The possible actions within the map
     actions = np.array([[ 0,  1],   # North
                         [ 1,  0],   # East
                         [ 0, -1],   # South
                         [-1,  0]])  # West
 
-    def __init__(self, map, open_size=50000, closed_size=50000, epsilon=1.0,
-                 r_max=1.0, v=2.0, t_factor=0.0):
+    def __init__(self, map, open_size=500000, closed_size=500000, epsilon=1.0,
+                 r_max=50.0, v=1.0, t_factor=100.0):
         '''
         Constructor of ARCThetaStar class.
         :param map: The map that the planner is going to use as a numpy array with values between 0 and 1, where 0 means the tile is free and 1 the tile is occupied.
@@ -44,6 +49,9 @@ class ARCThetaStar:
         self.epsilon = epsilon
         self.r_max = r_max
         self.v = v
+        self.t_factor = t_factor
+        
+        sio.savemat('map', {'map': self.map})
 
     def line_of_sight(self, id_start, id_goal):
         '''
@@ -253,6 +261,21 @@ class ARCThetaStar:
                 return n.g
         return None
    
+    def pose2d(self, node):
+        '''
+        Returns a geometry_msgs::Pose2D for given x,y and theta values.
+        :param x: The x value of the Pose2D.
+        :param y: The y value of the Pose2D.
+        :param theta: The theta value of the Pose2D.
+        :return: The Pose2D created from the given arguments.
+        '''
+        pose2d = Pose2D()
+        pose2d.x = node.pos[0]
+        pose2d.y = node.pos[1]
+        pose2d.theta = node.o
+        
+        return pose2d
+        
     def print_path(self, path, cost):
         '''
         Inserts the path into the map and prints it.
@@ -263,13 +286,13 @@ class ARCThetaStar:
         last_pos = None
         length = 0.0
         
-        for pos in path:
+        for pose in path:
             # Visualize path on map
-            map_tmp[pos[0], pos[1]] = 2
+            map_tmp[pose.x, pose.y] = 2
             # Calculate path length
             if last_pos is not None:
-                length += self.h_euc(last_pos, pos)
-            last_pos = pos
+                length += self.h_euc(last_pos, np.array([pose.x, pose.y]))
+            last_pos = np.array([pose.x, pose.y])
             
         print('\nFinal path length:  {0:.2f}'.format(length+cost))
         print(map_tmp)
@@ -286,11 +309,15 @@ class ARCThetaStar:
         :return: The path as a list of positions within the map from start to goal.
         '''
         
-        start = [start.x, start.y]
-        goal = [goal.x, goal.y]
-        
         if start_orientation == 10:
             start_orientation = start.theta
+            
+        start = np.array([int(start.x/0.05), int(start.y/0.05)])
+        goal = np.array([int(goal.x/0.05), int(goal.y/0.05)])
+        
+        print('START:  ', start)
+        print('GOAL:  ', goal)
+
         
         # Boundary checks
         if not self.is_valid(start):
@@ -316,6 +343,7 @@ class ARCThetaStar:
             n_cur = self.open.get()
             
             if n_cur.id == n_g.id:
+                print('GOAL FOUUUUUND!!!')
                 break
             
             # Add current node to closed list
@@ -334,25 +362,23 @@ class ARCThetaStar:
         print('Finished path search.')
         
         # Follow path back
-        path = PoseArray()
-        pose = Pose()
-        pose.position.x = n_cur.pos[0]
-        pose.position.y = n_cur.pos[1]
-        pose.position.z = 0
-        # pose.orientation.
-
-
-        path = [n_cur.pos]
+        print('INT PATH: ')
+        print(n_cur.pos)
+        path = [self.pose2d(n_cur)]
         cost = 0.0
         while n_cur.id != n_s.id:
             # Change current node to parent node
             n_cur = self.get_node(n_cur.parent)
+            print(n_cur.pos)
+
             # Append current position to path
-            path.append(n_cur.pos)
+            path.append(self.pose2d(n_cur))
             # Update cost
             cost += n_cur.t
         
         self.print_path(path, cost)
+        
+        path.reverse()
         
         return path
         

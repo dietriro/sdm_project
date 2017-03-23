@@ -1,1 +1,1 @@
-int8[] dim2
+int16[] dim2

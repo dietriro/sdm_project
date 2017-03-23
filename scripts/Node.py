@@ -1,3 +1,5 @@
+#!/usr/bin/env python
+
 import numpy as np
 
 class Node:
@@ -23,7 +25,7 @@ class Node:
             self.parent = parent
             
     def __cmp__(self, other):
-        return cmp(self.g+self.h+self.t, other.g+other.h+other.t)
+        return cmp(self.g+self.h+self.t*1, other.g+other.h+other.t*1)
 
     def __eq__(self, other):
         return self.id == other.id
